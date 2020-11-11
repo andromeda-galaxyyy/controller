@@ -1,6 +1,8 @@
 package apps.myonos.src.main.java.org.orlo;
 
 import apps.myonos.src.main.java.org.orlo.ClassifyModuleThread;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -18,6 +20,7 @@ import java.util.concurrent.Executors;
  * 接收主机上传的5元组等信息，并且每当收到一组数据，都会开启一个线程去请求分类模块.
  */
 public class HostModuleThread implements Runnable {
+    private final Logger log = LoggerFactory.getLogger(ClassifyModuleThread.class);
     // 线程安全的队列，用于存储五元组和分类信息
     private ConcurrentLinkedQueue<String> flowClq;
     public HostModuleThread(ConcurrentLinkedQueue<String> flowClq) {
@@ -57,8 +60,10 @@ public class HostModuleThread implements Runnable {
                              buffer.clear();
                              stringBuilder.append(res);
                          }
+                         String sss = stringBuilder.toString();
+//                         log.info(sss);
                          // 实例化请求分类模块的线程
-                         ClassifyModuleThread classifyModuleThread = new ClassifyModuleThread(stringBuilder.toString(), flowClq);
+                         ClassifyModuleThread classifyModuleThread = new ClassifyModuleThread(sss, flowClq);
                          // 运行线程
                          executorService.submit(classifyModuleThread);
                          channel.close();

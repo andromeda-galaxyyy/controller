@@ -57,6 +57,7 @@ public class ClassifyModuleThread implements Runnable {
                 arrayList.add(str.substring(1, str.length() - 1));
             }
             arrayList.add(res);
+//            log.info(res);
             if (arrayList.size() == 6) {
                 StringBuilder out = new StringBuilder();
                 for (int i = 0; i < 5; i++) {

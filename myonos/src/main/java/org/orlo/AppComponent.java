@@ -145,6 +145,7 @@ public class AppComponent {
     private ArrayList<FlowRule> beforeoptiflowRulesList = new ArrayList<>();
     private HashMap<String, ArrayList<Long>> oldStatics = new HashMap<>();
     private ArrayList<TopologyEdge> edgeArrayList = new ArrayList<>();
+    private String upMatrix;
     @Activate
     protected void activate() {
 
@@ -165,6 +166,8 @@ public class AppComponent {
         installFlowThread = new Thread(new InstallFlowByClqThread());
         installFlowThread.start();
 //        showEdgeSpeed(30);
+
+        optiRouterMission(70, 100, -1);
         log.info("----------------Activated end-------------------------");
     }
 
@@ -197,7 +200,8 @@ public class AppComponent {
         //每隔5s上传一次流量矩阵
 //        storeMatrixMission();
         //每隔1s统计一次接入端口流数据
-        storeFlowRateMission();
+//        storeFlowRateMission();
+        getMatrixMission();
     }
     /**
      * 设置switch间port的信息.
@@ -708,7 +712,7 @@ public class AppComponent {
             int f = key + 1;
             for (int i = 1; i < switchNum + 1; i++) {
                 if (i != f) {
-//                    jsonArray.add(hashMap.get(String.valueOf(i)));
+                    jsonArray.add(hashMap.get(String.valueOf(i)));
                     sum1 += hashMap.get(String.valueOf(i));
                 }
             }
@@ -720,7 +724,7 @@ public class AppComponent {
             int f = key + 1;
             for (int i = 1; i < switchNum + 1; i++) {
                 if (i != f) {
-//                    jsonArray.add(hashMap.get(String.valueOf(i + switchNum)));
+                    jsonArray.add(hashMap.get(String.valueOf(i + switchNum)));
                     sum2 += hashMap.get(String.valueOf(i + switchNum));
                 }
             }
@@ -732,13 +736,13 @@ public class AppComponent {
             int f = key + 1;
             for (int i = 1; i < switchNum + 1; i++) {
                 if (i != f) {
-//                    jsonArray.add(hashMap.get(String.valueOf(i + 2 * switchNum)));
+                    jsonArray.add(hashMap.get(String.valueOf(i + 2 * switchNum)));
                     sum3 += hashMap.get(String.valueOf(i + 2 * switchNum));
                 }
             }
         }
         sum3 = sum3 / 4290;
-//        matrixRes.set("volumes", jsonArray);
+        matrixRes.set("volumes", jsonArray);
         try {
             JsonNode jsonNode = new ObjectMapper().readTree(topoIdx.substring(0, topoIdx.length() - 1));
             JsonNode topoid = jsonNode.get("topo_idx");
@@ -927,7 +931,7 @@ public class AppComponent {
                 //清空优化流表
                 emptyOptiFlow();
                 log.info("---------upload flow Matrix count " + timesCnt + "----------");
-                String  traficMatrix = getTraficMatrix();
+                String  traficMatrix = upMatrix;
                 writeToFile(traficMatrix, "/home/traficMatrix.txt");
 //                    log.info(traficMatrix);
                 executorService.submit(new FlowMarixThread(traficMatrix));
@@ -1080,7 +1084,7 @@ public class AppComponent {
         }, 100, 1000);
     }
     /**
-     * 定时任务,用于每5s存储一次流量矩阵.
+     * 定时任务,用于每20s存储一次流量矩阵.
      *
      */
     private void storeMatrixMission() {
@@ -1090,7 +1094,16 @@ public class AppComponent {
                 String matrix = getMatrix();
                 writeToFile(matrix, "/home/Matrix.txt");
             }
-        }, 100, 1000);
+        }, 10000, 20000);
+    }
+
+    private void getMatrixMission() {
+        timer.schedule(new TimerTask() {
+            @Override
+            public void run() {
+                upMatrix = getTraficMatrix();
+            }
+        }, 1000, 6000);
     }
     /**
      * 把信息输出到文件.
@@ -1318,7 +1331,7 @@ public class FlowMarixThread implements Runnable {
     public void run() {
         try {
             SocketChannel socketChannel = SocketChannel.open();
-            socketChannel.connect(new InetSocketAddress("192.168.1.196", 1028));
+            socketChannel.connect(new InetSocketAddress("192.168.1.132", 1030));
 //            socketChannel.connect(new InetSocketAddress("172.16.181.1", 1027));
             ByteBuffer byteBuffer = ByteBuffer.allocate(512 * 1024);
             byteBuffer.put(matrixMap.getBytes());
@@ -1337,7 +1350,9 @@ public class FlowMarixThread implements Runnable {
                 byteBuffer.clear();
                 stringBuilder.append(res);
             }
-            routingClq.offer(stringBuilder.toString());
+            String out = stringBuilder.toString();
+            log.info(out);
+            routingClq.offer(out);
             socketChannel.close();
         } catch (IOException e) {
             e.printStackTrace();
