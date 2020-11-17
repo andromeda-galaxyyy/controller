@@ -20,9 +20,20 @@ import com.eclipsesource.json.JsonObject;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.onosproject.net.Device;
+import com.google.common.collect.ImmutableList;
+import org.onlab.packet.IpAddress;
+import org.onlab.util.KryoNamespace;
+import org.onosproject.core.GroupId;
 import org.onosproject.net.device.PortStatistics;
 import org.onosproject.net.edge.EdgePortService;
+import org.onosproject.net.group.DefaultGroupBucket;
+import org.onosproject.net.group.DefaultGroupDescription;
+import org.onosproject.net.group.DefaultGroupKey;
+import org.onosproject.net.group.GroupBucket;
+import org.onosproject.net.group.GroupBuckets;
+import org.onosproject.net.group.GroupDescription;
+import org.onosproject.net.group.GroupKey;
+import org.onosproject.net.group.GroupService;
 import org.onosproject.net.statistic.PortStatisticsService;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
@@ -81,6 +92,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.Timer;
 import java.util.TimerTask;
@@ -96,6 +108,11 @@ import java.util.concurrent.Executors;
 public class AppComponent {
 
     private final  Logger log = LoggerFactory.getLogger(getClass());
+
+    protected static KryoNamespace appKryo = new KryoNamespace.Builder()
+            .register(Integer.class)
+            .register(DeviceId.class)
+            .build("orlo-group-fwd");
     private ApplicationId appId;
     private HashMap<String, PortNumber> testPortMap = HandleConfigFile.getPortMap();
     private HashMap<String, DeviceId> testSwMap = HandleConfigFile.getSwMap();
@@ -126,6 +143,8 @@ public class AppComponent {
     protected EdgePortService edgePortService;
     @Reference(cardinality = org.osgi.service.component.annotations.ReferenceCardinality.MANDATORY)
     protected PortStatisticsService portStatisticsService;
+    @Reference(cardinality = org.osgi.service.component.annotations.ReferenceCardinality.MANDATORY)
+    protected GroupService groupService;
 
     private ExecutorService executorService = Executors.newFixedThreadPool(6);
     private Timer timer = new Timer();
@@ -151,7 +170,7 @@ public class AppComponent {
 
         appId = coreService.registerApplication("org.orlo.app");
         log.info("------------Activate Started-------------------------");
-        initMethod();
+/*        initMethod();
         //请求默认路由
         executorService.submit(new DefaultFlowThread());
         topoIdxThread = new Thread(new TopoIdxThread());
@@ -167,7 +186,10 @@ public class AppComponent {
         installFlowThread.start();
 //        showEdgeSpeed(30);
 
-        optiRouterMission(70, 100, -1);
+        optiRouterMission(70, 100, -1);*/
+        mfwdInit();
+//        groupInstall();
+        iHelper();
         log.info("----------------Activated end-------------------------");
     }
 
@@ -181,6 +203,155 @@ public class AppComponent {
         topoIdxThread.stop();
         log.info("--------------------System Stopped-------------------------");
     }
+
+    /**
+     * 多播相关函数初始化.
+     */
+    private void mfwdInit() {
+        log.info("---------------multicast----------------");
+        IpPrefix srcIp = IpPrefix.valueOf("10.0.0.1/24");
+        String newSrcIp = "10.0.8.1";
+        List<String> outports = new ArrayList<>();
+        outports.add("2");
+        outports.add("3");
+        outports.add("4");
+        installMultiCastFlow(srcIp, "1", outports, newSrcIp, testSwMap.get("0"));
+
+    }
+
+    private void installMultiCastFlow(IpPrefix srcIP, String inPort, List<String> outports, String newSrcIP, DeviceId deviceId) {
+        DefaultFlowRule.Builder ruleBuilder = DefaultFlowRule.builder();
+        TrafficSelector.Builder selectBuilder = DefaultTrafficSelector.builder();
+        selectBuilder.matchEthType(Ethernet.TYPE_IPV4)
+                .matchInPort(PortNumber.portNumber(inPort))
+                .matchIPSrc(srcIP);
+        TrafficTreatment.Builder trafficBuilder = DefaultTrafficTreatment.builder();
+        for(String output : outports) {
+            trafficBuilder.setOutput(PortNumber.portNumber(output));
+        }
+        trafficBuilder.transition(1);
+        //处理返回包的流表项
+        handleReturnPacket(inPort, newSrcIP, deviceId);
+        ruleBuilder.withSelector(selectBuilder.build())
+                .withPriority(60000)
+                .withTreatment(trafficBuilder.build())
+                .forTable(0)
+                .fromApp(appId)
+                .makePermanent()
+                .forDevice(deviceId);
+        FlowRuleOperations.Builder flowRulebuilder = FlowRuleOperations.builder();
+        flowRulebuilder.add(ruleBuilder.build());
+        flowRuleService.apply(flowRulebuilder.build());
+    }
+
+    private void handleReturnPacket(String inPort, String newSrcIP,  DeviceId deviceId) {
+        DefaultFlowRule.Builder ruleBuilder = DefaultFlowRule.builder();
+        TrafficSelector.Builder selectBuilder = DefaultTrafficSelector.builder();
+        selectBuilder.matchEthType(Ethernet.TYPE_IPV4);
+        TrafficTreatment.Builder trafficBuilder = DefaultTrafficTreatment.builder();
+        trafficBuilder.setIpSrc(IpAddress.valueOf(newSrcIP))
+                .setOutput(PortNumber.portNumber(inPort));
+
+        ruleBuilder.withSelector(selectBuilder.build())
+                .withPriority(55000)
+                .withTreatment(trafficBuilder.build())
+                .forTable(1)
+                .fromApp(appId)
+                .makePermanent()
+                .forDevice(deviceId);
+        FlowRuleOperations.Builder flowRulebuilder = FlowRuleOperations.builder();
+        flowRulebuilder.add(ruleBuilder.build());
+        flowRuleService.apply(flowRulebuilder.build());
+    }
+
+
+    private void iHelper() {
+        DeviceId deviceA = testSwMap.get("1");
+        DeviceId deviceB = testSwMap.get("10");
+        DeviceId deviceC = testSwMap.get("11");
+        installHelper(deviceA);
+        installHelper(deviceB);
+        installHelper(deviceC);
+    }
+
+    private void installHelper(DeviceId deviceId) {
+        DefaultFlowRule.Builder ruleBuilder = DefaultFlowRule.builder();
+        TrafficSelector.Builder selectBuilder = DefaultTrafficSelector.builder();
+        selectBuilder.matchEthType(Ethernet.TYPE_IPV4)
+                .matchInPort(PortNumber.portNumber("2"));
+
+        TrafficTreatment.Builder trafficBuilder = DefaultTrafficTreatment.builder();
+        trafficBuilder.drop();
+        ruleBuilder.withSelector(selectBuilder.build())
+                .withPriority(65500)
+                .withTreatment(trafficBuilder.build())
+                .forTable(0)
+                .fromApp(appId)
+                .makePermanent()
+                .forDevice(deviceId);
+        FlowRuleOperations.Builder flowRulebuilder = FlowRuleOperations.builder();
+        flowRulebuilder.add(ruleBuilder.build());
+        flowRuleService.apply(flowRulebuilder.build());
+
+    }
+
+    private void groupInstall() {
+        DeviceId deviceId = testSwMap.get("0");
+        TrafficTreatment.Builder treatmentBuilder1 = DefaultTrafficTreatment.builder();
+        treatmentBuilder1.setOutput(PortNumber.portNumber("2"))
+                .setOutput(PortNumber.portNumber("3"))
+                .setOutput((PortNumber.portNumber("4")));
+        GroupBucket groupBucket1 = DefaultGroupBucket.createAllGroupBucket(treatmentBuilder1.build());
+        TrafficTreatment.Builder treatmentBuilder2 = DefaultTrafficTreatment.builder();
+        treatmentBuilder2.setVlanId(VlanId.vlanId((short) 1))
+                .setIpSrc(IpAddress.valueOf("10.0.8.1"))
+                .setOutput(PortNumber.portNumber("1"));
+        GroupBucket groupBucket2 = DefaultGroupBucket.createAllGroupBucket(treatmentBuilder2.build());
+        Integer groupId = generateDeviceGroupId(deviceId);
+        GroupKey groupKey = generateGroupKey(deviceId, groupId);
+        GroupDescription groupDescription = new DefaultGroupDescription(
+                deviceId,
+                GroupDescription.Type.ALL,
+                new GroupBuckets(ImmutableList.of(groupBucket1, groupBucket2)),
+                groupKey,
+                groupId,
+                appId
+        );
+        groupService.addGroup(groupDescription);
+
+        DefaultFlowRule.Builder ruleBuilder = DefaultFlowRule.builder();
+        TrafficSelector.Builder selectBuilder = DefaultTrafficSelector.builder();
+        selectBuilder.matchEthType(Ethernet.TYPE_IPV4)
+                .matchInPort(PortNumber.portNumber("1"))
+                .matchIPSrc(IpPrefix.valueOf("10.0.0.1/24"));
+        TrafficTreatment.Builder trafficBuilder = DefaultTrafficTreatment.builder();
+        trafficBuilder.deferred()
+                .group(new GroupId(groupId));
+
+        ruleBuilder.withSelector(selectBuilder.build())
+                .withPriority(65500)
+                .withTreatment(trafficBuilder.build())
+                .forTable(0)
+                .fromApp(appId)
+                .makePermanent()
+                .forDevice(deviceId);
+        FlowRuleOperations.Builder flowRulebuilder = FlowRuleOperations.builder();
+        flowRulebuilder.add(ruleBuilder.build());
+        flowRuleService.apply(flowRulebuilder.build());
+        log.info("-------complete group install--------------");
+    }
+
+    private GroupKey generateGroupKey(DeviceId deviceId, Integer groupId) {
+        int hashed = Objects.hash(deviceId, groupId);
+        return new DefaultGroupKey(appKryo.serialize(hashed));
+    }
+
+    private Integer generateDeviceGroupId(DeviceId deviceId) {
+        // make sure first bit is 1 for device group id
+        return deviceId.hashCode() | 0x80000000;
+    }
+
+
     /**
      * 初始化系统启动所需的相关方法.
      */
